@@ -1,0 +1,371 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1788163476149,
+  "projectRoot": "/Users/jaemin/Developer/Despell/PNYX/midnight/PNYX-BE",
+  "techStack": {
+    "languages": [
+      {
+        "name": "JavaScript/TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "package.json"
+        ]
+      },
+      {
+        "name": "TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "tsconfig.json"
+        ]
+      }
+    ],
+    "frameworks": [
+      {
+        "name": "@nestjs/core",
+        "version": "11.0.1",
+        "category": "backend"
+      },
+      {
+        "name": "jest",
+        "version": "30.0.0",
+        "category": "testing"
+      }
+    ],
+    "packageManager": "pnpm",
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": "pnpm build",
+    "testCommand": "pnpm test",
+    "lintCommand": "pnpm lint",
+    "devCommand": "pnpm start",
+    "scripts": {
+      "build": "nest build",
+      "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
+      "start": "nest start",
+      "start:dev": "nest start --watch",
+      "start:debug": "nest start --debug --watch",
+      "start:prod": "node dist/main.js",
+      "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
+      "test": "jest",
+      "test:watch": "jest --watch",
+      "test:cov": "jest --coverage",
+      "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
+      "test:e2e": "jest --config ./test/jest-e2e.json"
+    }
+  },
+  "conventions": {
+    "namingStyle": "camelCase/PascalCase",
+    "importStyle": "ES modules",
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "scripts",
+      "src"
+    ],
+    "gitBranches": null
+  },
+  "customNotes": [
+    {
+      "timestamp": 1784729416846,
+      "source": "manual",
+      "category": "env",
+      "content": "Local dev DB: 로컬 mongod(brew mongodb-community@7.0)에 replica set rs0가 PRIMARY로 이미 구성됨(mongod.conf replSetName: rs0). 트랜잭션 사용 가능. 로컬 개발용 MongoDB URI = mongodb://localhost:27017/pnyx?replicaSet=rs0 (auth 없음, 빈 pnyx DB는 앱 첫 실행 시 스키마 자동 생성). 원격 URI는 GCP 내부 IP 10.128.0.2(pnyx, authSource=admin, rs0)를 가리킴 -- 로컬에서 직접 접근 불가. env.util.ts는 dotenv.config()로 .env 하나만 로드하므로 로컬/원격 전환은 .env의 MONGODB_URI 값 교체로 함. 로컬 mongod의 pressa_local DB는 구 pressa 스키마라 이 레포와 무관. Redis(REDIS_URL)도 원격 34.70.191.45:6379 사용."
+    },
+    {
+      "timestamp": 1784730344072,
+      "source": "manual",
+      "category": "architecture",
+      "content": "API 라우팅: main.ts에서 setGlobalPrefix('api', exclude health/health/ready) + enableVersioning({type:URI, defaultVersion:'1'})가 켜져 있어 모든 API 경로가 /api/v1/... 형태다. 예: SIWE 인증 = GET /api/v1/auth/nonce, POST /api/v1/auth/verify (auth.controller.ts는 @Controller('auth')). /api/auth/... 로 호출하면 404. 로컬 서버 포트는 .env PORT=3001 (기본 3000 아님). /health, /health/ready만 prefix 제외."
+    },
+    {
+      "timestamp": 1784732300168,
+      "source": "manual",
+      "category": "architecture",
+      "content": "SIWE 로컬 로그인 이슈 해결(2026-07-22): 로컬 http에서 verify가 'SIWE nonce cookie missing'(auth.service.ts:137)로 실패한 원인은 nonce 쿠키가 브라우저에 저장 안 됐기 때문. cookie.util.ts baseCookieOptions가 partitioned:true 하드코딩 + COOKIE_SAME_SITE=none이라, NODE_ENV=local(secure=false)에서 'SameSite=None; Partitioned'인데 Secure가 없어 브라우저가 거부(Chrome80+). env만으로 못 고침(NODE_ENV=development는 helmet HSTS+upgrade-insecure로 localhost가 https 강제돼 더 깨짐). 수정: baseCookieOptions에서 secure=false일 때 partitioned를 끄고 SameSite=None→lax로 다운그레이드(prod https는 기존 동작 유지). 추가로 'User not found'(user.service.ts:38 getPoint, GET /me)는 pnyx_snapshot의 users가 0개라서 로그인 성공 전엔 항상 404 나는 하위 증상이었음. FE는 nonce/verify fetch 모두 credentials:'include' 필요."
+    }
+  ],
+  "directoryMap": {
+    "asset": {
+      "path": "asset",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1788163476128,
+      "keyFiles": [
+        "database.connection.ts"
+      ]
+    },
+    "dist": {
+      "path": "dist",
+      "purpose": "Distribution/build output",
+      "fileCount": 6,
+      "lastAccessed": 1788163476130,
+      "keyFiles": [
+        "app.module.d.ts",
+        "app.module.js",
+        "app.module.js.map",
+        "main.d.ts",
+        "main.js"
+      ]
+    },
+    "midnight-contract": {
+      "path": "midnight-contract",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1788163476131,
+      "keyFiles": []
+    },
+    "midnight-level-db": {
+      "path": "midnight-level-db",
+      "purpose": null,
+      "fileCount": 12,
+      "lastAccessed": 1788163476131,
+      "keyFiles": [
+        "000005.ldb",
+        "000012.ldb",
+        "000015.ldb",
+        "000142.ldb",
+        "000148.ldb"
+      ]
+    },
+    "scripts": {
+      "path": "scripts",
+      "purpose": "Build/utility scripts",
+      "fileCount": 4,
+      "lastAccessed": 1788163476132,
+      "keyFiles": [
+        "midnight-auth-smoke.mjs",
+        "midnight-e2e-smoke.mjs",
+        "start-local.sh",
+        "sync-contract.sh"
+      ]
+    },
+    "src": {
+      "path": "src",
+      "purpose": "Source code",
+      "fileCount": 2,
+      "lastAccessed": 1788163476132,
+      "keyFiles": [
+        "app.module.ts",
+        "main.ts"
+      ]
+    },
+    "dist/config": {
+      "path": "dist/config",
+      "purpose": "Configuration files",
+      "fileCount": 15,
+      "lastAccessed": 1788163476133,
+      "keyFiles": [
+        "allowed-origins.config.d.ts",
+        "allowed-origins.config.js",
+        "allowed-origins.config.js.map"
+      ]
+    },
+    "src/config": {
+      "path": "src/config",
+      "purpose": "Configuration files",
+      "fileCount": 10,
+      "lastAccessed": 1788163476134,
+      "keyFiles": [
+        "allowed-origins.config.spec.ts",
+        "allowed-origins.config.ts",
+        "cors.config.spec.ts"
+      ]
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "src/module/midnight/midnight.service.ts",
+      "accessCount": 6,
+      "lastAccessed": 1788246772615,
+      "type": "file"
+    },
+    {
+      "path": "src/module/common/util/cookie.util.ts",
+      "accessCount": 3,
+      "lastAccessed": 1784732044358,
+      "type": "file"
+    },
+    {
+      "path": "src/module/midnight/midnight-fulfill.service.ts",
+      "accessCount": 3,
+      "lastAccessed": 1788246077101,
+      "type": "file"
+    },
+    {
+      "path": "src/module/common/util/enum.util.ts",
+      "accessCount": 2,
+      "lastAccessed": 1788245035666,
+      "type": "file"
+    },
+    {
+      "path": "src/config/mongoose.config.ts",
+      "accessCount": 1,
+      "lastAccessed": 1784728709254,
+      "type": "file"
+    },
+    {
+      "path": "src/util/env.util.ts",
+      "accessCount": 1,
+      "lastAccessed": 1784728722919,
+      "type": "file"
+    },
+    {
+      "path": "src/module/api/auth/auth.controller.ts",
+      "accessCount": 1,
+      "lastAccessed": 1784730304969,
+      "type": "file"
+    },
+    {
+      "path": "src/main.ts",
+      "accessCount": 1,
+      "lastAccessed": 1784730315395,
+      "type": "file"
+    },
+    {
+      "path": "src/module/api/auth/auth.service.ts",
+      "accessCount": 1,
+      "lastAccessed": 1784730609085,
+      "type": "file"
+    },
+    {
+      "path": "src/config/cors.config.ts",
+      "accessCount": 1,
+      "lastAccessed": 1784730688355,
+      "type": "file"
+    },
+    {
+      "path": "src/module/api/user/user.service.ts",
+      "accessCount": 1,
+      "lastAccessed": 1784731754188,
+      "type": "file"
+    },
+    {
+      "path": "src/module/api/user/user.repository.ts",
+      "accessCount": 1,
+      "lastAccessed": 1784731771011,
+      "type": "file"
+    },
+    {
+      "path": "src/module/api/user/user.controller.ts",
+      "accessCount": 1,
+      "lastAccessed": 1784731771481,
+      "type": "file"
+    },
+    {
+      "path": "src/config/helmet.config.ts",
+      "accessCount": 1,
+      "lastAccessed": 1784731934752,
+      "type": "file"
+    },
+    {
+      "path": "src/schema/domain/midnight/midnight-escrow.schema.ts",
+      "accessCount": 1,
+      "lastAccessed": 1788244978001,
+      "type": "file"
+    },
+    {
+      "path": "src/schema/domain/midnight/midnight-order.schema.ts",
+      "accessCount": 1,
+      "lastAccessed": 1788245033613,
+      "type": "file"
+    },
+    {
+      "path": "src/module/domain/midnight-order/midnight-order.repository.ts",
+      "accessCount": 1,
+      "lastAccessed": 1788245072538,
+      "type": "file"
+    },
+    {
+      "path": "src/module/domain/midnight-order/midnight-order.service.ts",
+      "accessCount": 1,
+      "lastAccessed": 1788245092986,
+      "type": "file"
+    },
+    {
+      "path": "src/module/domain/midnight-order/midnight-order.module.ts",
+      "accessCount": 1,
+      "lastAccessed": 1788245094610,
+      "type": "file"
+    },
+    {
+      "path": "src/module/domain/midnight-escrow/midnight-escrow.repository.ts",
+      "accessCount": 1,
+      "lastAccessed": 1788245115850,
+      "type": "file"
+    },
+    {
+      "path": "src/module/midnight/lib/market.ts",
+      "accessCount": 1,
+      "lastAccessed": 1788245118576,
+      "type": "file"
+    },
+    {
+      "path": "src/module/domain/midnight-escrow/midnight-escrow.service.ts",
+      "accessCount": 1,
+      "lastAccessed": 1788245134825,
+      "type": "file"
+    },
+    {
+      "path": "src/module/midnight/lib/market.spec.ts",
+      "accessCount": 1,
+      "lastAccessed": 1788245164661,
+      "type": "file"
+    },
+    {
+      "path": "src/module/midnight/dto/req/create-order.body.dto.ts",
+      "accessCount": 1,
+      "lastAccessed": 1788245204249,
+      "type": "file"
+    },
+    {
+      "path": "src/module/midnight/dto/req/pay-order.body.dto.ts",
+      "accessCount": 1,
+      "lastAccessed": 1788245206394,
+      "type": "file"
+    },
+    {
+      "path": "src/module/midnight/dto/req/order.param.dto.ts",
+      "accessCount": 1,
+      "lastAccessed": 1788245208015,
+      "type": "file"
+    },
+    {
+      "path": "src/module/midnight/dto/res/market-product.res.dto.ts",
+      "accessCount": 1,
+      "lastAccessed": 1788245239324,
+      "type": "file"
+    },
+    {
+      "path": "src/module/midnight/dto/res/order.res.dto.ts",
+      "accessCount": 1,
+      "lastAccessed": 1788245246812,
+      "type": "file"
+    },
+    {
+      "path": "src/module/midnight/midnight-market.service.ts",
+      "accessCount": 1,
+      "lastAccessed": 1788245361479,
+      "type": "file"
+    },
+    {
+      "path": "src/module/midnight/market.controller.ts",
+      "accessCount": 1,
+      "lastAccessed": 1788245501436,
+      "type": "file"
+    },
+    {
+      "path": "src/module/midnight/midnight.module.ts",
+      "accessCount": 1,
+      "lastAccessed": 1788245531036,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}

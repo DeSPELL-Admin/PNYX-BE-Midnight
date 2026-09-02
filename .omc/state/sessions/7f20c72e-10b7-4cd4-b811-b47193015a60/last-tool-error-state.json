@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"echo \\\"=== ItemImage ===\\\" && cat src/components/ui/ItemImage.tsx 2>/dev/null\"}",
+  "error": "Exit code 1\n=== ItemImage ===",
+  "timestamp": "2026-09-01T07:00:14.146Z",
+  "retry_count": 2
+}
