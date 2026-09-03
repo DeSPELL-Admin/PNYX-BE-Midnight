@@ -128,3 +128,6 @@ midnight-wallet-state*.json
 # env backups
 .env.bak*
 .env.bak-*
+
+.omc/
+.gjc/
