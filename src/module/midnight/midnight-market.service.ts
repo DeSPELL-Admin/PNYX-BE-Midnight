@@ -12,6 +12,7 @@ import { MidnightOrderService } from 'src/module/domain/midnight-order/midnight-
 import { MidnightOrderRecord } from 'src/module/domain/midnight-order/midnight-order.repository';
 import { MidnightEscrowService } from 'src/module/domain/midnight-escrow/midnight-escrow.service';
 import { TournamentService } from 'src/module/api/tournament/tournament.service';
+import { ItemService } from 'src/module/domain/item/item.service';
 import {
     buyerPkHex,
     canonicalQuerySpec,
@@ -24,9 +25,13 @@ import {
 } from 'src/module/common/util/enum.util';
 import { MarketProductResDto } from './dto/res/market-product.res.dto';
 import { OrderResDto } from './dto/res/order.res.dto';
+import { OrderCatalogResDto } from './dto/res/order-catalog.res.dto';
 
 /** escrow 배치 상한 — 회로의 Vector<8, EscrowRow> 와 같아야 한다. */
 export const ESCROW_BATCH = 8;
+
+/** 내 주문 목록 상한. */
+const MY_ORDERS_LIMIT = 50;
 
 /**
  * 데이터 마켓 (docs/market-dev-plan.md) — 상품 목록 · 주문 · 결제 기록 · 데이터셋 서빙.
@@ -50,6 +55,7 @@ export class MidnightMarketService {
         private readonly orderService: MidnightOrderService,
         private readonly escrowService: MidnightEscrowService,
         private readonly tournamentService: TournamentService,
+        private readonly itemService: ItemService,
     ) {}
 
     /** escrow 가 있는 토너먼트만 상품이 된다. 온체인 sampleCount 는 10초 캐시. */
@@ -207,6 +213,59 @@ export class MidnightMarketService {
         );
     }
 
+    /** 호출자 본인의 주문 목록 — 최신순 50건. */
+    async getMyOrders(
+        chainId: number,
+        walletAddress: string,
+    ): Promise<OrderResDto[]> {
+        const orders = await this.orderService.findByBuyer(
+            chainId,
+            walletAddress,
+            MY_ORDERS_LIMIT,
+        );
+        return await Promise.all(orders.map((o) => this.toResDto(o)));
+    }
+
+    /**
+     * 주문 토너먼트의 아이템 카탈로그 — 데이터셋의 itemId/bracket 을 이름·이미지로 렌더링하는 참조표.
+     * 주문 상태와 무관하게 조회 가능하며, 소유자만 볼 수 있다.
+     */
+    async getOrderCatalog(
+        chainId: number,
+        walletAddress: string,
+        orderId: string,
+    ): Promise<OrderCatalogResDto> {
+        const order = await this.requireOwnOrder(
+            chainId,
+            walletAddress,
+            orderId,
+        );
+        const [tournamentTitle, items] = await Promise.all([
+            this.tournamentTitleOf(order.tournamentId),
+            this.itemService.findNamesByTournamentId(order.tournamentId),
+        ]);
+        return {
+            tournamentId: order.tournamentId,
+            tournamentTitle,
+            items: items.map((i) => ({
+                itemId: i.itemId,
+                name: i.name,
+                imageName: i.imageName,
+            })),
+        };
+    }
+
+    /** 시드에 없는 토너먼트여도 조회는 성공해야 한다 — 제목만 기본값으로 폴백. */
+    private async tournamentTitleOf(tournamentId: number): Promise<string> {
+        try {
+            const t =
+                await this.tournamentService.getTournamentById(tournamentId);
+            return t.title;
+        } catch {
+            return `Tournament ${tournamentId}`;
+        }
+    }
+
     /** 다운로드 원문 — datasetJson 문자열을 재직렬화 없이 그대로 반환해야 datasetHash 가 유지된다. */
     async getDatasetJson(
         chainId: number,
@@ -248,7 +307,16 @@ export class MidnightMarketService {
             this.midnightService.operatorAddress(),
             this.midnightService.nativeTokenRaw(),
         ]);
-        const { datasetJson: _omit, ...rest } = order as MidnightOrderRecord & {
+        // 응답에서 빠져야 하는 필드는 여기서 구조적으로 제거한다 — @ResponseDto 의
+        // excludeExtraneousValues 에만 기대면 데코레이터가 빠지는 순간 새어나간다.
+        const {
+            datasetJson: _datasetJson,
+            pinnedRows: _pinnedRows,
+            buyerAddress: _buyerAddress,
+            chainId: _chainId,
+            attempts: _attempts,
+            ...rest
+        } = order as MidnightOrderRecord & {
             updatedAt?: Date;
         };
         return {

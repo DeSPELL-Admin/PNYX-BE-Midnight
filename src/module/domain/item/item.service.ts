@@ -4,6 +4,7 @@ import {
     NotFoundException,
 } from '@nestjs/common';
 import { ItemRepository } from './item.repository';
+import { FindNamesByTournamentIdQueryResult } from './query-result/find-names-by-tournament-id.query-result';
 import { GetItemByTournamentIdItemIdResDto } from 'src/module/api/tournament/dto/res/get-item-by-tournament-id-and-item-id.res.dto';
 import { GetRandomItemIdsByTournamentIdResDto } from 'src/module/api/tournament/dto/res/get-random-item-ids-by-tournament-id.res.dto';
 import { pickRandomNumbers } from './item.util';
@@ -36,6 +37,13 @@ export class ItemService {
 
         const randomItemIds = pickRandomNumbers(totalItemCount, roundCount);
         return { randomItemIds };
+    }
+
+    /** 토너먼트의 (itemId, name, imageName) 전체 — 데이터셋 이름 해석·구매 카탈로그용. */
+    async findNamesByTournamentId(
+        tournamentId: number,
+    ): Promise<FindNamesByTournamentIdQueryResult[]> {
+        return await this.itemRepository.findNamesByTournamentId(tournamentId);
     }
 
     async getItemByTournamentIdItemId(

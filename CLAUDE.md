@@ -107,7 +107,9 @@ This copy is Midnight-only; the legacy EVM scanner and signing stack were remove
   It lists `images/{ts}_{uuid}_{imageName}.webp`, parses `imageName` as `{sanitizedName}-{tournamentId}`
   (the rule `insert-metadata.ts` writes; `10`/`11` share a `-10-11` suffix), and upserts `files`
   (`originalName` → `uploadedName`, required or images 404), `categories`, `tournaments` and `items`.
-  Result: 9 tournaments (`0,1,2,3,4,9,10,11,12`) × 64 items = 576 items, 512 file rows.
+  Result: 8 tournaments (`0,1,2,3,4,10,11,12`) × 64 items = 512 items. Tournament `9`
+  (Soneium Ecosystem World Cup) is in the bucket but deliberately skipped via `EXCLUDED_TOURNAMENTS` —
+  it is Soneium/EVM-era content and has no place in the Midnight build.
 
   Two things the bucket cannot carry, both isolated so they are easy to correct:
   - **Tournament titles/categories** — inferred from the item sets, in `TOURNAMENT_META` at the top of the

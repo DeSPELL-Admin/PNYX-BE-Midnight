@@ -1,9 +1,20 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import {
+    Injectable,
+    Logger,
+    NotFoundException,
+    OnModuleInit,
+} from '@nestjs/common';
 import { MidnightService, PinnedEscrowRow } from './midnight.service';
 import { MidnightOrderService } from 'src/module/domain/midnight-order/midnight-order.service';
 import { MidnightOrderRecord } from 'src/module/domain/midnight-order/midnight-order.repository';
 import { MidnightEscrowService } from 'src/module/domain/midnight-escrow/midnight-escrow.service';
-import { canonicalDatasetJson, sha256HexUtf8 } from './lib/market';
+import { TournamentService } from 'src/module/api/tournament/tournament.service';
+import { ItemService } from 'src/module/domain/item/item.service';
+import {
+    canonicalDatasetJson,
+    resolveItemNames,
+    sha256HexUtf8,
+} from './lib/market';
 import {
     MidnightOrderStage,
     MidnightOrderStatus,
@@ -36,6 +47,8 @@ export class MidnightFulfillService implements OnModuleInit {
         private readonly midnightService: MidnightService,
         private readonly orderService: MidnightOrderService,
         private readonly escrowService: MidnightEscrowService,
+        private readonly tournamentService: TournamentService,
+        private readonly itemService: ItemService,
     ) {}
 
     /** 부팅 복구 — 스톨된 FULFILLING 을 PAID 로 되돌리고, 모든 PAID 를 다시 큐에 넣는다. */
@@ -125,37 +138,9 @@ export class MidnightFulfillService implements OnModuleInit {
                 MidnightOrderStatus.FULFILLING,
                 MidnightOrderStage.BUILDING,
             );
-            const escrow = await this.escrowService.findByTournament(
-                order.chainId,
-                order.tournamentId,
-            );
-            const pinned: PinnedEscrowRow[] = escrow
-                .slice(0, ESCROW_BATCH)
-                .map((r) => ({
-                    tournamentId: r.tournamentId,
-                    itemId: r.itemId,
-                    bracket: r.bracket ?? [],
-                    segment: r.segment,
-                    salt: r.salt,
-                }));
-            if (pinned.length === 0) {
-                await this.fail(
-                    orderId,
-                    'EmptyDataset: no escrow rows at fulfill time',
-                );
-                return;
-            }
-            const datasetJson = canonicalDatasetJson({
-                tournamentId: order.tournamentId,
-                orderId,
-                rows: pinned,
-            });
-            const datasetHash = sha256HexUtf8(datasetJson);
-            await this.orderService.updateByOrderId(orderId, {
-                rowCount: pinned.length,
-                datasetJson,
-                datasetHash,
-            });
+            const built = await this.buildOrReuseDataset(order, orderId);
+            if (!built) return; // fail() 이미 기록됨 (EmptyDataset)
+            const { pinned, datasetHash } = built;
 
             // [3] proving — sellRows 증명 + 제출 (60~90초)
             await this.setStage(
@@ -187,6 +172,118 @@ export class MidnightFulfillService implements OnModuleInit {
         } catch (e) {
             await this.handleFailure(order, orderId, e);
         }
+    }
+
+    /**
+     * 판매 대상 로우와 데이터셋 바이트를 확정한다.
+     *
+     * 이전 시도가 이미 고정한 것이 있으면 **그대로 재사용**한다. 시도 1이 온체인에는
+     * 올라갔는데 응답만 유실된 경우, 시도 2가 라이브 escrow/이름으로 재빌드하면
+     * 이미 체인에 박힌 datasetHash 와 다른 파일을 팔게 된다 (escrow 로우가 늘었거나
+     * 아이템 이름·토너먼트 제목이 수정됐을 수 있다).
+     *
+     * @returns 데이터셋. escrow 가 비어 fail() 을 기록한 경우 null.
+     */
+    private async buildOrReuseDataset(
+        order: MidnightOrderRecord,
+        orderId: string,
+    ): Promise<{
+        pinned: PinnedEscrowRow[];
+        datasetJson: string;
+        datasetHash: string;
+    } | null> {
+        if (
+            order.datasetJson &&
+            order.datasetHash &&
+            order.pinnedRows?.length
+        ) {
+            const pinned: PinnedEscrowRow[] = order.pinnedRows.map((r) => ({
+                tournamentId: r.tournamentId,
+                itemId: r.itemId,
+                bracket: r.bracket ?? [],
+                segment: r.segment,
+                salt: r.salt,
+            }));
+            this.logger.log(
+                `order ${orderId}: reusing dataset pinned by a previous attempt (rows=${pinned.length} hash=${order.datasetHash.slice(0, 16)}…)`,
+            );
+            return {
+                pinned,
+                datasetJson: order.datasetJson,
+                datasetHash: order.datasetHash,
+            };
+        }
+
+        const escrow = await this.escrowService.findByTournament(
+            order.chainId,
+            order.tournamentId,
+        );
+        const pinned: PinnedEscrowRow[] = escrow
+            .slice(0, ESCROW_BATCH)
+            .map((r) => ({
+                tournamentId: r.tournamentId,
+                itemId: r.itemId,
+                bracket: r.bracket ?? [],
+                segment: r.segment,
+                salt: r.salt,
+            }));
+        if (pinned.length === 0) {
+            await this.fail(
+                orderId,
+                'EmptyDataset: no escrow rows at fulfill time',
+            );
+            return null;
+        }
+        // 데이터셋 v2 — 판매 파일 안에 사람이 읽을 수 있는 이름을 함께 담는다.
+        // 이름은 데이터셋 JSON 전용이며, ZK witness 로 가는 pinned 는 그대로 둔다.
+        const [tournamentTitle, nameByItemId] = await Promise.all([
+            this.tournamentTitleOf(order.tournamentId),
+            this.itemNamesOf(order.tournamentId),
+        ]);
+        const datasetJson = canonicalDatasetJson({
+            tournamentId: order.tournamentId,
+            tournamentTitle,
+            orderId,
+            rows: resolveItemNames(pinned, nameByItemId),
+        });
+        const datasetHash = sha256HexUtf8(datasetJson);
+        await this.orderService.updateByOrderId(orderId, {
+            rowCount: pinned.length,
+            datasetJson,
+            datasetHash,
+            pinnedRows: pinned,
+        });
+        return { pinned, datasetJson, datasetHash };
+    }
+
+    /**
+     * 시드에 없는 토너먼트여도 fulfill 은 계속돼야 한다 — "없음"일 때만 기본 제목으로 폴백.
+     * 그 밖의 오류(DB 장애 등)는 그대로 던져 이번 시도를 실패시킨다: 여기서 삼키면
+     * 잘못된 제목이 datasetHash 에 그대로 고정된다.
+     */
+    private async tournamentTitleOf(tournamentId: number): Promise<string> {
+        try {
+            const t =
+                await this.tournamentService.getTournamentById(tournamentId);
+            return t?.title ?? `Tournament ${tournamentId}`;
+        } catch (e) {
+            if (e instanceof NotFoundException)
+                return `Tournament ${tournamentId}`;
+            throw e;
+        }
+    }
+
+    /**
+     * 이름 조회 오류는 이번 시도를 실패시킨다 — 데이터셋 바이트의 sha256 이 몇 초 뒤
+     * 온체인에 고정되므로, 일시적 DB 오류로 만들어진 `#<id>` 투성이 파일이 영구히
+     * 팔려나가면 안 된다. 카탈로그에 정말 없는 id 만 resolveItemNames 가 폴백한다.
+     */
+    private async itemNamesOf(
+        tournamentId: number,
+    ): Promise<Map<number, string>> {
+        const items =
+            await this.itemService.findNamesByTournamentId(tournamentId);
+        return new Map(items.map((i) => [i.itemId, i.name]));
     }
 
     private async confirmLicense(

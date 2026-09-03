@@ -38,15 +38,22 @@ const TOURNAMENT_META: Record<number, { category: string; title: string }> = {
     2: { category: 'anime', title: 'Male Anime Character World Cup' },
     3: { category: 'anime', title: 'Female Anime Character World Cup' },
     4: { category: 'game', title: 'Video Game World Cup' },
-    9: { category: 'crypto', title: 'Crypto Ecosystem World Cup' },
     10: { category: 'crypto', title: 'Crypto Token World Cup' },
     11: { category: 'crypto', title: 'Crypto Token World Cup II' },
     12: { category: 'food', title: 'Food World Cup' },
 };
 
+/**
+ * 버킷에는 있지만 Midnight 빌드에는 넣지 않는 토너먼트.
+ *  - 9: Soneium Ecosystem World Cup (Arcas, Kyo Finance, SONEX …) — EVM(Soneium) 시절 전용 콘텐츠.
+ * 이미지·files 행·tournaments·items 모두 건너뛴다.
+ */
+const EXCLUDED_TOURNAMENTS = new Set<number>([9]);
+
 /** `-10-11` 접미사는 토너먼트 10 과 11 이 함께 쓴다. */
 const SHARED_SUFFIX = '10-11';
-const OBJECT_RE = /^(?<ts>[0-9TZ.:-]+)_(?<uuid>[0-9a-f]{32})_(?<image>.+)\.webp$/;
+const OBJECT_RE =
+    /^(?<ts>[0-9TZ.:-]+)_(?<uuid>[0-9a-f]{32})_(?<image>.+)\.webp$/;
 const IMAGE_RE = new RegExp(`^(?<name>.+?)-(?<suffix>${SHARED_SUFFIX}|\\d+)$`);
 
 /** `AttackonTitan` → `Attackon Titan`, `AlanWake2` → `Alan Wake 2`. 표시용이라 완벽 복원은 불가능하다. */
@@ -102,11 +109,18 @@ async function listBucketImages(): Promise<BucketImage[]> {
                 continue;
             }
             const { name, suffix } = matched.groups;
+            const tournamentIds =
+                suffix === SHARED_SUFFIX ? [10, 11] : [Number(suffix)];
+            if (tournamentIds.every((id) => EXCLUDED_TOURNAMENTS.has(id))) {
+                continue; // 제외 토너먼트 전용 이미지 — files 행도 만들지 않는다
+            }
             collected.push({
                 imageName,
                 uploadedName: objectName,
                 fileSize: Number(file.metadata.size ?? 0),
-                tournamentIds: suffix === SHARED_SUFFIX ? [10, 11] : [Number(suffix)],
+                tournamentIds: tournamentIds.filter(
+                    (id) => !EXCLUDED_TOURNAMENTS.has(id),
+                ),
                 displayName: toDisplayName(name),
             });
         }
@@ -135,14 +149,20 @@ async function main(): Promise<void> {
         list.sort((a, b) => a.imageName.localeCompare(b.imageName));
     }
 
-    const missingMeta = [...byTournament.keys()].filter((id) => !TOURNAMENT_META[id]);
+    const missingMeta = [...byTournament.keys()].filter(
+        (id) => !TOURNAMENT_META[id],
+    );
     if (missingMeta.length) {
-        throw new Error(`TOURNAMENT_META 에 없는 토너먼트: ${missingMeta.join(', ')}`);
+        throw new Error(
+            `TOURNAMENT_META 에 없는 토너먼트: ${missingMeta.join(', ')}`,
+        );
     }
 
     console.log('\n토너먼트별 아이템 수');
     for (const id of [...byTournament.keys()].sort((a, b) => a - b)) {
-        console.log(`  ${String(id).padStart(2)} ${TOURNAMENT_META[id].title} — ${byTournament.get(id)!.length}개`);
+        console.log(
+            `  ${String(id).padStart(2)} ${TOURNAMENT_META[id].title} — ${byTournament.get(id)!.length}개`,
+        );
     }
 
     if (dryRun) {
@@ -177,10 +197,16 @@ async function main(): Promise<void> {
     await FileModel.bulkWrite(fileOps);
     console.log(`files: ${fileOps.length}건`);
 
-    const categories = [...new Set(Object.values(TOURNAMENT_META).map((m) => m.category))];
+    const categories = [
+        ...new Set(Object.values(TOURNAMENT_META).map((m) => m.category)),
+    ];
     await CategoryModel.bulkWrite(
         categories.map((category) => ({
-            updateOne: { filter: { category }, update: { $set: { category } }, upsert: true },
+            updateOne: {
+                filter: { category },
+                update: { $set: { category } },
+                upsert: true,
+            },
         })),
     );
     console.log(`categories: ${categories.join(', ')}`);
@@ -190,7 +216,9 @@ async function main(): Promise<void> {
         tournamentIds.map((tournamentId) => ({
             updateOne: {
                 filter: { tournamentId },
-                update: { $set: { tournamentId, ...TOURNAMENT_META[tournamentId] } },
+                update: {
+                    $set: { tournamentId, ...TOURNAMENT_META[tournamentId] },
+                },
                 upsert: true,
             },
         })),
