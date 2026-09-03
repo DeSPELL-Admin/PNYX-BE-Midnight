@@ -97,7 +97,12 @@ export async function buildOperatorWallet(sdk: MidnightSdk, config: MidnightConf
             Rx.filter((s: any) => isReady(s)),
         ),
     );
-    await saveCheckpoint(config.walletStateFile, wallet);
+    // 체크포인트는 재시작 시 동기화 시간을 아끼는 캐시일 뿐이다 — 읽기 전용 FS 등으로 못 써도 부팅은 계속한다.
+    try {
+        await saveCheckpoint(config.walletStateFile, wallet);
+    } catch (e) {
+        logger.warn(`wallet checkpoint not saved (${config.walletStateFile}): ${e instanceof Error ? e.message : String(e)}`);
+    }
 
     const night = synced.unshielded.balances[ledger.unshieldedToken().raw] ?? 0n;
     const dustBalance = synced.dust.balance(new Date());
