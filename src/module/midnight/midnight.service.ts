@@ -91,11 +91,20 @@ export class MidnightService implements OnModuleInit {
             );
             return;
         }
-        void this.getCtx().catch((e) =>
-            this.logger.error(
-                `Midnight operator init failed: ${e?.message ?? e}`,
-            ),
+        // onModuleInit 은 app.listen() 보다 먼저 실행된다. 여기서 바로 초기화하면 wallet-sdk 의
+        // ESM/WASM 로딩과 동기화가 listen 과 같은 이벤트 루프를 두고 경쟁해 포트가 늦게 열리고
+        // 배포 스크립트의 /health 체크가 실패한다. 몇 초 미뤄서 서버가 먼저 뜨게 한다.
+        const delayMs = parseInt(
+            process.env.MIDNIGHT_INIT_DELAY_MS ?? '5000',
+            10,
         );
+        setTimeout(() => {
+            void this.getCtx().catch((e) =>
+                this.logger.error(
+                    `Midnight operator init failed: ${e?.message ?? e}`,
+                ),
+            );
+        }, delayMs);
     }
 
     get chainId(): number | null {

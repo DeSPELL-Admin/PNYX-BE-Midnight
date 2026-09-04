@@ -94,8 +94,11 @@ This copy is Midnight-only; the legacy EVM scanner and signing stack were remove
   (ESM contract + keys/zkir) to `midnight-contract/` (gitignored). Proving keys are required for `grantEligibility`.
 - **Env**: `MIDNIGHT_ENABLED`, `MIDNIGHT_NETWORK`, `MIDNIGHT_CHAIN_ID`, `MIDNIGHT_WALLET_SEED` (same wallet as the
   contract deployer/operator), `MIDNIGHT_TOURNAMENT_FINALIZER_CONTRACT_ADDRESS`, `MIDNIGHT_PROOF_SERVER_URL`,
-  `MIDNIGHT_WALLET_STATE_FILE` (sync checkpoint — copy `PNYX-Contract/scripts/output/wallet-state-preprod.json`
-  here to skip the ~30 min first sync), `MIDNIGHT_GRANT_TTL_SECONDS`.
+  `MIDNIGHT_WALLET_STATE_FILE` (sync checkpoint; `midnight-wallet-state-preprod.json` is **committed** and
+  COPYed into the Docker image so a fresh container skips the ~30 min genesis sync — it holds public keys +
+  synced state only, no seed. Re-commit the locally refreshed file when the gap grows), `MIDNIGHT_INIT_DELAY_MS`
+  (default 5000 — operator init is deferred so `app.listen()` binds before the wallet-sdk WASM load blocks
+  the event loop; the deploy health check needs the port open within ~60 s), `MIDNIGHT_GRANT_TTL_SECONDS`.
 - **Real seed data** comes from the GCS asset bucket, which is the only surviving source (the
   `PNYX-Assets` dumps and the remote dev Mongo are both unavailable here):
 

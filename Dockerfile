@@ -51,10 +51,15 @@ COPY --from=builder --chown=node:node /app/dist ./dist
 # 는 /app 기준으로 해석된다.
 COPY --from=builder --chown=node:node /app/midnight-contract ./midnight-contract
 
+# preprod 오퍼레이터 지갑 동기화 체크포인트(레포에 커밋됨, 공개키 + 동기화 상태만).
+# 없으면 컨테이너가 제네시스부터 ~30분 동기화하며 그동안 이벤트 루프가 막혀 헬스체크가 실패한다.
+# MIDNIGHT_WALLET_STATE_FILE 기본값(midnight-wallet-state-<network>.json, cwd 기준)과 경로가 같다.
+COPY --chown=node:node midnight-wallet-state-preprod.json ./midnight-wallet-state-preprod.json
+
 # 런타임이 cwd(/app) 에 상태를 쓴다 — 지갑 동기화 체크포인트(MIDNIGHT_WALLET_STATE_FILE, 기본
 # midnight-wallet-state-<network>.json) 와 midnight-js private state DB(midnight-level-db/).
 # WORKDIR 이 만든 /app 은 root 소유라 node 유저로는 EACCES 가 나므로 디렉터리 소유권을 넘긴다.
-# 재시작 후 동기화 시간을 아끼려면 두 경로를 볼륨으로 마운트한다.
+# 컨테이너가 갱신한 체크포인트는 재배포 시 사라진다 — 유지하려면 두 경로를 볼륨으로 마운트한다.
 RUN chown node:node /app
 
 # 보안 기본값: root 권한 대신 node 사용자로 실행한다.

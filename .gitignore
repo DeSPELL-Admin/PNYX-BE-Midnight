@@ -127,6 +127,10 @@ sa_pnyx_gcs_prd@pnyx_485200_iam_gserviceaccount_com_46cdabbfe0bc.json
 # Only the browser-side prover keys are excluded — the BE never proves finalizeTournament*.
 midnight-contract/**/finalizeTournament*.prover
 midnight-wallet-state*.json
+# preprod 오퍼레이터 지갑 동기화 체크포인트 — 공개키 + 동기화 상태뿐, 시드/비밀키 없음.
+# Dockerfile 이 이미지에 COPY 하므로 컨테이너가 제네시스부터 ~30분 동기화하는 것을 피한다.
+# 오래되면 재동기화가 길어지니 가끔 로컬 실행으로 갱신된 파일을 다시 커밋한다.
+!midnight-wallet-state-preprod.json
 # midnight-js levelPrivateStateProvider 가 cwd 에 만드는 런타임 상태 DB
 midnight-level-db/
 
