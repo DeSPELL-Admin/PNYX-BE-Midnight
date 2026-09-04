@@ -16,7 +16,9 @@ COPY src ./src
 
 # Midnight 컴파일 컨트랙트(ESM contract + keys/zkir). midnight.service.ts 의
 # `typeof import('../../../midnight-contract/...')` 타입 해석에 필요하므로 빌더에도 복사한다.
-# (gitignore 대상이지만 docker 빌드 컨텍스트에는 포함된다. 빌드 전 scripts/sync-contract.sh 로 동기화.)
+# 이 디렉터리는 레포에 커밋되어 있다(배포 빌드 컨텍스트에는 PNYX-Contract 가 없으므로).
+# 컨트랙트를 다시 컴파일하면 scripts/sync-contract.sh 로 갱신해 커밋한다. FE 전용
+# finalizeTournament*.prover 는 제외되어 있다(BE 는 그 회로를 증명하지 않는다).
 # node_modules 밖이라 `npm prune` 후에도 유지된다.
 COPY midnight-contract ./midnight-contract
 

@@ -1,74 +1,74 @@
 name: PNYX-BE Development Server Deploy CI/CD
 
 on:
-  push:
-    branches:
-      - develop
+    push:
+        branches:
+            - develop
 
 env:
-  PROJECT_NAME: PNYX-BE
+    PROJECT_NAME: PNYX-BE-Midnight
 
 jobs:
-  "Build-And-Deploy":
-    runs-on: ubuntu-latest
-    steps:
-      - name: Execute Build And Deploy Via SSH
-        uses: appleboy/ssh-action@v1.2.2
-        env:
-          DOTENV_DEV: ${{ secrets.DOTENV_DEV }}
-          SCRIPT_DIR: ./scripts/${{ env.PROJECT_NAME }}
-        with:
-          host: ${{ secrets.DEV_SERVER_HOST }}
-          username: ${{ secrets.DEV_SERVER_USERNAME }}
-          key: ${{ secrets.DEV_SERVER_SSH_KEY }}
-          envs: DOTENV_DEV,SCRIPT_DIR
-          script: |
-            mkdir -p ${SCRIPT_DIR}/envs
-            printf '%s\n' "${DOTENV_DEV}" > ${SCRIPT_DIR}/envs/.env.development
-            chmod 600 ${SCRIPT_DIR}/envs/.env.development
-            bash ${SCRIPT_DIR}/run.sh
+    'Build-And-Deploy':
+        runs-on: ubuntu-latest
+        steps:
+            - name: Execute Build And Deploy Via SSH
+              uses: appleboy/ssh-action@v1.2.2
+              env:
+                  DOTENV_DEV: ${{ secrets.DOTENV_DEV }}
+                  SCRIPT_DIR: ./scripts/${{ env.PROJECT_NAME }}
+              with:
+                  host: ${{ secrets.DEV_SERVER_HOST }}
+                  username: ${{ secrets.DEV_SERVER_USERNAME }}
+                  key: ${{ secrets.DEV_SERVER_SSH_KEY }}
+                  envs: DOTENV_DEV,SCRIPT_DIR
+                  script: |
+                      mkdir -p ${SCRIPT_DIR}/envs
+                      printf '%s\n' "${DOTENV_DEV}" > ${SCRIPT_DIR}/envs/.env.development
+                      chmod 600 ${SCRIPT_DIR}/envs/.env.development
+                      bash ${SCRIPT_DIR}/run.sh
 
-  "Discord-Notification":
-    if: always()
-    needs: "Build-And-Deploy"
-    # runs-on: ubuntu-latest
-    runs-on: self-hosted
-    steps:
-      - name: Get short SHA
-        id: vars
-        run: echo "short_sha=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+    'Discord-Notification':
+        if: always()
+        needs: 'Build-And-Deploy'
+        # runs-on: ubuntu-latest
+        runs-on: self-hosted
+        steps:
+            - name: Get short SHA
+              id: vars
+              run: echo "short_sha=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
 
-      - name: Send Discord Notification
-        uses: sarisia/actions-status-discord@v1
-        with:
-          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          nocontext: true
-          status: ${{ needs.Build-And-Deploy.result }}
-          title: '${{ env.PROJECT_NAME }} Development CI/CD Pipeline'
-          description: |
-            **Status: ${{ needs.Build-And-Deploy.result }}**
-            **Event: ${{ github.event_name }}**
+            - name: Send Discord Notification
+              uses: sarisia/actions-status-discord@v1
+              with:
+                  webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
+                  nocontext: true
+                  status: ${{ needs.Build-And-Deploy.result }}
+                  title: '${{ env.PROJECT_NAME }} Development CI/CD Pipeline'
+                  description: |
+                      **Status: ${{ needs.Build-And-Deploy.result }}**
+                      **Event: ${{ github.event_name }}**
 
-            **Repository**
-            [${{ github.repository }}](https://github.com/${{ github.repository }})
-            **Reference**
-            [${{ github.ref }}](https://github.com/${{ github.repository }}/tree/${{ github.ref_name }})
-            **Branch**
-            [${{ github.ref_name }}](https://github.com/${{ github.repository }}/tree/${{ github.ref_name }})
+                      **Repository**
+                      [${{ github.repository }}](https://github.com/${{ github.repository }})
+                      **Reference**
+                      [${{ github.ref }}](https://github.com/${{ github.repository }}/tree/${{ github.ref_name }})
+                      **Branch**
+                      [${{ github.ref_name }}](https://github.com/${{ github.repository }}/tree/${{ github.ref_name }})
 
-            **Commit Hash**
-            [`${{ steps.vars.outputs.short_sha }}`](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
-            **Commit Message**
-            [${{ github.event.head_commit.message }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
+                      **Commit Hash**
+                      [`${{ steps.vars.outputs.short_sha }}`](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
+                      **Commit Message**
+                      [${{ github.event.head_commit.message }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
 
-            **GitHub Actions Workflow Log**
-            [${{ github.workflow }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
-            [View Workflow Log](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+                      **GitHub Actions Workflow Log**
+                      [${{ github.workflow }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+                      [View Workflow Log](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
 
-            **Docker Container Log**
-            https://dozzle.despell.io
-            [View Container Log](https://dozzle.despell.io)
+                      **Docker Container Log**
+                      https://dozzle.despell.io
+                      [View Container Log](https://dozzle.despell.io)
 
-            **Triggered by**
-            [${{ github.actor }}](https://github.com/${{ github.actor }})
-          username: 'Github Actions'
+                      **Triggered by**
+                      [${{ github.actor }}](https://github.com/${{ github.actor }})
+                  username: 'Github Actions'
