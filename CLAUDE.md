@@ -107,6 +107,11 @@ This copy is Midnight-only; the legacy EVM scanner and signing stack were remove
       asset/seed-creation/import-from-bucket.ts [--dry]
   ```
 
+  The importer loads `.env` with `override: true`, so a `MONGODB_URI=...` on the command line is
+  **ignored**. To seed another database (the dev server's Mongo is reachable on its public IP with
+  `directConnection=true`), copy `.env` to `.env.devdb`, change `MONGODB_URI` there, and run with
+  `DOTENV_CONFIG_PATH=.env.devdb` in front of the command above. Always `--dry` first.
+
   It lists `images/{ts}_{uuid}_{imageName}.webp`, parses `imageName` as `{sanitizedName}-{tournamentId}`
   (the rule `insert-metadata.ts` writes; `10`/`11` share a `-10-11` suffix), and upserts `files`
   (`originalName` → `uploadedName`, required or images 404), `categories`, `tournaments` and `items`.

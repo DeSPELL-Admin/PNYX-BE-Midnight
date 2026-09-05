@@ -16,9 +16,13 @@
  *
  * 셸에 MONGODB_URI / BUCKET_NAME 이 export 되어 있어도 .env 가 이기도록 override 로 읽는다
  * (이 저장소에서 실제로 다른 프로젝트 DB 에 쓰는 사고가 났던 지점이다).
+ * 다른 DB(예: dev 서버)에 넣을 때는 .env 를 복사해 MONGODB_URI 만 바꾼 파일을 만들고
+ * DOTENV_CONFIG_PATH=.env.devdb 로 지정한다 — 셸 export 로는 절대 바꿀 수 없다.
  */
 import dotenv from 'dotenv';
-dotenv.config({ override: true });
+dotenv.config({ override: true, path: process.env.DOTENV_CONFIG_PATH ?? '.env' });
+if (process.env.DOTENV_CONFIG_PATH)
+    console.log(`env: ${process.env.DOTENV_CONFIG_PATH}`);
 
 import mongoose from 'mongoose';
 import { Storage } from '@google-cloud/storage';

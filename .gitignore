@@ -137,6 +137,9 @@ midnight-level-db/
 # env backups
 .env.bak*
 .env.bak-*
+# 시드 스크립트용 대체 env (DOTENV_CONFIG_PATH=.env.devdb 등) — 자격 증명 포함
+.env.*
+!.env.example
 
 .omc/
 .gjc/
