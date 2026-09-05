@@ -209,7 +209,10 @@ export class MidnightService implements OnModuleInit {
                 };
                 const out = rows.slice(0, 8).map((r) => {
                     const hasher = hashers[r.bracket?.length ?? 0];
-                    if (!hasher) throw new Error(`escrow row has invalid bracket length ${r.bracket?.length ?? 0}`);
+                    if (!hasher)
+                        throw new Error(
+                            `escrow row has invalid bracket length ${r.bracket?.length ?? 0}`,
+                        );
                     const row = {
                         tournamentId: BigInt(r.tournamentId),
                         itemId: BigInt(r.itemId),
@@ -230,7 +233,12 @@ export class MidnightService implements OnModuleInit {
                 while (out.length < 8)
                     out.push({
                         present: false,
-                        row: { tournamentId: 0n, itemId: 0n, bracketHash: zero, segment: zero },
+                        row: {
+                            tournamentId: 0n,
+                            itemId: 0n,
+                            bracketHash: zero,
+                            segment: zero,
+                        },
                         salt: zero,
                         path: emptyPath(zero),
                     });

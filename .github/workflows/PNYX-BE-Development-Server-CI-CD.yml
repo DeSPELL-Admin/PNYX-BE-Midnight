@@ -31,8 +31,8 @@ jobs:
     'Discord-Notification':
         if: always()
         needs: 'Build-And-Deploy'
-        # runs-on: ubuntu-latest
-        runs-on: self-hosted
+        runs-on: ubuntu-latest
+        #runs-on: self-hosted
         steps:
             - name: Get short SHA
               id: vars
