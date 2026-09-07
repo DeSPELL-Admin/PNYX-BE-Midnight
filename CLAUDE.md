@@ -142,6 +142,19 @@ This copy is Midnight-only; the legacy EVM scanner and signing stack were remove
   → `/tournaments/:id/rounds/8` (creates playVerification) → on-chain `grantEligibility` (~30 s). Prints the
   `SMOKE_SEED` so the same simulated wallet can be reused. `scripts/midnight-auth-smoke.mjs` is the older
   login-only version.
+- **Headless vote generator** (data-market demo data): `bash scripts/start-local.sh node
+  scripts/midnight-headless-votes.mjs [base] [origin] [tournamentId] [count] [--round=16|32|64]
+  [--champion=<itemId>] [--pause=<sec>]` does the whole browser flow N times — fresh simulated wallet →
+  grant → **finalizeTournament proof + submit** → finalize-confirm → escrow (~1–2 min per vote, ~35 s of it
+  proving). Votes must be real: `sellRows` asserts `RowNotOnChain` per row, so DB-only escrow rows can never be
+  sold. The nullifier is `hash(userSecret, tournamentId)`, so one wallet (the operator's, for fees) can cast
+  many votes with fresh `userSecret`s. Needs `npm run build` (reuses `dist/` sdk/wallet loaders), a proof server
+  that accepts contract circuits (local `:6300`; the public preprod one returns 403 on `/prove`), and the
+  `finalizeTournament*.prover` keys — absent from `midnight-contract/` on purpose, so it reads them from
+  `../PNYX-Contract/contracts/managed/TournamentFinalizer` (or `--contract-dir`). The contract *module* is
+  always loaded from `midnight-contract/` — importing the sibling repo's copy loads a second compact-runtime
+  WASM and fails with `expected instance of ChargedState`. Waits for the grant leaf to be visible on the indexer
+  before proving (otherwise `InvalidSigner`). Wallet checkpoint goes to `*.headless.json` so it never races the BE.
 - `ChainService.getAllSupportedChainIds()` appends the Midnight chainId when enabled; `chain.service.spec.ts`
   pins `MIDNIGHT_ENABLED=false`.
 - **Data market** (`docs/market-dev-plan.md` in `midnight/`): `/chains/99101/market/*` — products
