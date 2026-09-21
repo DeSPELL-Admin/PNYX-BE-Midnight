@@ -32,6 +32,11 @@ type Checkpoint = {
 
 const logger = new Logger('MidnightWallet');
 
+// 정상 복원이면 첫 배치가 수 초 안에 적용된다 — 이만큼 아무 진행이 없으면 체크포인트가 못 쓰는 것이다.
+const CHECKPOINT_STALL_MS = 90_000;
+
+class StaleCheckpointError extends Error {}
+
 function readCheckpoint(file: string): Checkpoint | undefined {
     try {
         return fs.existsSync(file)
@@ -100,70 +105,20 @@ export async function buildOperatorWallet(
         networkId,
     );
 
-    const cp = readCheckpoint(config.walletStateFile);
-    if (cp) logger.log(`restoring wallet sync checkpoint from ${cp.savedAt}`);
+    const savedCp = readCheckpoint(config.walletStateFile);
+    if (savedCp)
+        logger.log(`restoring wallet sync checkpoint from ${savedCp.savedAt}`);
 
-    const wallet = await facade.WalletFacade.init({
-        configuration: {
-            networkId,
-            indexerClientConnection: {
-                indexerHttpUrl: config.indexerUrl,
-                indexerWsUrl: config.indexerWsUrl,
-                keepAlive: 10_000,
-            },
-            provingServerUrl: new URL(config.proofServerUrl),
-            relayURL: new URL(config.nodeUrl.replace(/^http/, 'ws')),
-            txHistoryStorage: new abstractions.NoOpTransactionHistoryStorage(),
-            costParameters: {
-                additionalFeeOverhead: 300_000_000_000_000n,
-                feeBlocksMargin: 5,
-            },
-            batchUpdates: { size: 2000, timeout: 250 },
-        },
-        shielded: (cfg) =>
-            cp
-                ? shielded.ShieldedWallet(cfg).restore(cp.shielded)
-                : shielded
-                      .ShieldedWallet(cfg)
-                      .startWithSecretKeys(shieldedSecretKeys),
-        unshielded: (cfg) =>
-            cp
-                ? unshielded.UnshieldedWallet(cfg).restore(cp.unshielded)
-                : unshielded
-                      .UnshieldedWallet(cfg)
-                      .startWithPublicKey(
-                          unshielded.PublicKey.fromKeyStore(unshieldedKeystore),
-                      ),
-        dust: (cfg) =>
-            cp
-                ? dust.DustWallet(cfg).restore(cp.dust)
-                : dust
-                      .DustWallet(cfg)
-                      .startWithSecretKey(
-                          dustSecretKey,
-                          ledger.LedgerParameters.initialParameters().dust,
-                      ),
-    });
-    await wallet.start(shieldedSecretKeys, dustSecretKey);
+    let started: { wallet: WalletFacade; synced: any };
+    try {
+        started = await startAndSync(savedCp);
+    } catch (e) {
+        if (!(e instanceof StaleCheckpointError)) throw e;
+        logger.warn(`${e.message} — discarding it and syncing from genesis`);
+        started = await startAndSync(undefined);
+    }
+    const { wallet, synced } = started;
 
-    let ticks = 0;
-    const synced: any = await Rx.firstValueFrom(
-        (wallet.state() as import('rxjs').Observable<any>).pipe(
-            Rx.throttleTime(15_000),
-            Rx.tap((s: any) => {
-                if (isReady(s)) return;
-                ticks += 1;
-                logger.log(
-                    `sync dust ${s.dust.progress.appliedIndex} | unshielded ${s.unshielded.progress.appliedId}/${s.unshielded.progress.highestTransactionId}`,
-                );
-                if (ticks % 8 === 0)
-                    void saveCheckpoint(config.walletStateFile, wallet).catch(
-                        () => undefined,
-                    );
-            }),
-            Rx.filter((s: any) => isReady(s)),
-        ),
-    );
     // 체크포인트는 재시작 시 동기화 시간을 아끼는 캐시일 뿐이다 — 읽기 전용 FS 등으로 못 써도 부팅은 계속한다.
     try {
         await saveCheckpoint(config.walletStateFile, wallet);
@@ -193,6 +148,109 @@ export async function buildOperatorWallet(
         encryptionPublicKey: synced.shielded.encryptionPublicKey.toHexString(),
         unshieldedAddress: unshieldedKeystore.getBech32Address().toString(),
     };
+
+    async function startAndSync(
+        cp: Checkpoint | undefined,
+    ): Promise<{ wallet: WalletFacade; synced: any }> {
+        const wallet = await facade.WalletFacade.init({
+            configuration: {
+                networkId,
+                indexerClientConnection: {
+                    indexerHttpUrl: config.indexerUrl,
+                    indexerWsUrl: config.indexerWsUrl,
+                    keepAlive: 10_000,
+                },
+                provingServerUrl: new URL(config.proofServerUrl),
+                relayURL: new URL(config.nodeUrl.replace(/^http/, 'ws')),
+                txHistoryStorage:
+                    new abstractions.NoOpTransactionHistoryStorage(),
+                costParameters: {
+                    additionalFeeOverhead: 300_000_000_000_000n,
+                    feeBlocksMargin: 5,
+                },
+                batchUpdates: { size: 2000, timeout: 250 },
+            },
+            shielded: (cfg) =>
+                cp
+                    ? shielded.ShieldedWallet(cfg).restore(cp.shielded)
+                    : shielded
+                          .ShieldedWallet(cfg)
+                          .startWithSecretKeys(shieldedSecretKeys),
+            unshielded: (cfg) =>
+                cp
+                    ? unshielded.UnshieldedWallet(cfg).restore(cp.unshielded)
+                    : unshielded
+                          .UnshieldedWallet(cfg)
+                          .startWithPublicKey(
+                              unshielded.PublicKey.fromKeyStore(
+                                  unshieldedKeystore,
+                              ),
+                          ),
+            dust: (cfg) =>
+                cp
+                    ? dust.DustWallet(cfg).restore(cp.dust)
+                    : dust
+                          .DustWallet(cfg)
+                          .startWithSecretKey(
+                              dustSecretKey,
+                              ledger.LedgerParameters.initialParameters().dust,
+                          ),
+        });
+        await wallet.start(shieldedSecretKeys, dustSecretKey);
+
+        let ticks = 0;
+        let lastProgressKey = '';
+        let lastProgressAt = Date.now();
+        const ready: Promise<any> = Rx.firstValueFrom(
+            (wallet.state() as import('rxjs').Observable<any>).pipe(
+                Rx.tap((s: any) => {
+                    const key = `${s.shielded?.progress?.appliedIndex}|${s.dust.progress.appliedIndex}|${s.unshielded.progress.appliedId}`;
+                    if (key === lastProgressKey) return;
+                    lastProgressKey = key;
+                    lastProgressAt = Date.now();
+                }),
+                Rx.throttleTime(15_000),
+                Rx.tap((s: any) => {
+                    if (isReady(s)) return;
+                    ticks += 1;
+                    logger.log(
+                        `sync dust ${s.dust.progress.appliedIndex} | unshielded ${s.unshielded.progress.appliedId}/${s.unshielded.progress.highestTransactionId}`,
+                    );
+                    if (ticks % 8 === 0)
+                        void saveCheckpoint(
+                            config.walletStateFile,
+                            wallet,
+                        ).catch(() => undefined);
+                }),
+                Rx.filter((s: any) => isReady(s)),
+            ),
+        );
+        if (!cp) return { wallet, synced: await ready };
+
+        // 복원한 체크포인트가 인덱서와 어긋나면(재인덱싱으로 이벤트 id 가 밀린 경우 등) SDK 는
+        // "values inserted non-linearly into … commitment tree" 를 내며 같은 자리에서 영원히 재시도한다.
+        // 진행이 멈춘 채로 남아 있으면 체크포인트를 버리고 genesis 부터 다시 동기화한다.
+        let watchdog: NodeJS.Timeout | undefined;
+        const stalled = new Promise<never>((_, reject) => {
+            watchdog = setInterval(() => {
+                if (Date.now() - lastProgressAt >= CHECKPOINT_STALL_MS)
+                    reject(
+                        new StaleCheckpointError(
+                            `wallet checkpoint from ${cp.savedAt} made no sync progress for ${CHECKPOINT_STALL_MS / 1000}s`,
+                        ),
+                    );
+            }, 5_000);
+        });
+        try {
+            return { wallet, synced: await Promise.race([ready, stalled]) };
+        } catch (e) {
+            ready.catch(() => undefined); // stop() 이 state 스트림을 끝내며 내는 EmptyError
+            await wallet.stop().catch(() => undefined);
+            throw e;
+        } finally {
+            clearInterval(watchdog);
+        }
+    }
 }
 
 /** wallet-sdk signRecipe 의 proof marker 버그 우회 — PNYX-Contract scripts/lib/wallet.ts 와 동일 */

@@ -96,7 +96,11 @@ This copy is Midnight-only; the legacy EVM scanner and signing stack were remove
   contract deployer/operator), `MIDNIGHT_TOURNAMENT_FINALIZER_CONTRACT_ADDRESS`, `MIDNIGHT_PROOF_SERVER_URL`,
   `MIDNIGHT_WALLET_STATE_FILE` (sync checkpoint; `midnight-wallet-state-preprod.json` is **committed** and
   COPYed into the Docker image so a fresh container skips the ~30 min genesis sync — it holds public keys +
-  synced state only, no seed. Re-commit the locally refreshed file when the gap grows), `MIDNIGHT_INIT_DELAY_MS`
+  synced state only, no seed. Re-commit the locally refreshed file when the gap grows. A checkpoint can go
+  stale wholesale: when the preprod indexer re-indexes, event ids shift and every restore loops forever on
+  `values inserted non-linearly into zswap/dust commitment tree`. `buildOperatorWallet` detects a restored
+  wallet that makes no sync progress for 90 s, stops it and re-syncs from genesis — after that happens,
+  re-commit the fresh file or every new container pays the full sync), `MIDNIGHT_INIT_DELAY_MS`
   (default 5000 — operator init is deferred so `app.listen()` binds before the wallet-sdk WASM load blocks
   the event loop; the deploy health check needs the port open within ~60 s), `MIDNIGHT_GRANT_TTL_SECONDS`.
 - **Real seed data** comes from the GCS asset bucket, which is the only surviving source (the
