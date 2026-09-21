@@ -317,6 +317,22 @@ export function walletProviders(sdk: MidnightSdk, op: OperatorWallet) {
                 );
             return op.wallet.finalizeRecipe(recipe);
         },
-        submitTx: (tx: any) => op.wallet.submitTransaction(tx) as any,
+        // facade 의 `submitTransaction` 은 `waitForStatus: 'Finalized'` 로 고정돼 있어 Substrate 최종성(≈18s)까지
+        // 기다린다. 우리는 블록 포함('InBlock', 블록 타임 ≈6s)까지만 기다린다 — 포함된 tx 가 최종성에서 빠지는
+        // 경우는 사실상 없고, 만에 하나 빠지면 grant 재사용 경로의 인덱서 프로브가 잡아 같은 leaf 를 재발급한다.
+        // pending 등록/revert 는 facade 의 submitTransaction 과 같은 순서로 직접 한다(코인 이중 사용 방지).
+        submitTx: async (tx: any) => {
+            const wallet = op.wallet as any;
+            try {
+                await wallet.pendingTransactionsService.addPendingTransaction(
+                    tx,
+                );
+                await wallet.submissionService.submitTransaction(tx, 'InBlock');
+                return tx.identifiers().at(-1);
+            } catch (e) {
+                await wallet.revert(tx);
+                throw e;
+            }
+        },
     };
 }

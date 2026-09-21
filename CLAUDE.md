@@ -102,7 +102,19 @@ This copy is Midnight-only; the legacy EVM scanner and signing stack were remove
   wallet that makes no sync progress for 90 s, stops it and re-syncs from genesis — after that happens,
   re-commit the fresh file or every new container pays the full sync), `MIDNIGHT_INIT_DELAY_MS`
   (default 5000 — operator init is deferred so `app.listen()` binds before the wallet-sdk WASM load blocks
-  the event loop; the deploy health check needs the port open within ~60 s), `MIDNIGHT_GRANT_TTL_SECONDS`.
+  the event loop; the deploy health check needs the port open within ~60 s), `MIDNIGHT_GRANT_TTL_SECONDS`,
+  `MIDNIGHT_GRANT_LIVENESS_THRESHOLD_SECONDS` (default 45 — `grantEligibility` is submitted with
+  `submitCallTxAsync` and the operator wallet adapter waits only for block inclusion (`InBlock`, ≈6 s;
+  the facade default `Finalized` was ≈18 s and the real grant bottleneck), so a stored grant record is
+  not proof the tx reached finality — the indexer shows the leaf ≈15 s after the API responds; on reuse the service probes the indexer (`probeGrantLiveness`: success / failed / absent /
+  inconclusive) and re-submits the same leaf when the tx is indexed as FAILURE/PARTIAL_SUCCESS or has been
+  absent longer than this threshold. Indexer errors fail open and keep the existing grant. Keep it below
+  the FE leaf-poll budget (~58 s) so a user retry actually triggers the re-grant. The probe runs inside the
+  per-user grant lock, so it is bounded by `MIDNIGHT_GRANT_PROBE_TIMEOUT_MS` (default 5000) and a timeout
+  is also inconclusive. Grant API latency is logged per request as `[grant-api-latency] … ms=<n>` and
+  the submit phases as `[grant-submit] prove= balance= submit=`. `ledger.domainTag` is read once at
+  operator init and cached for the process lifetime; if the contract owner ever calls `setDomainTag`,
+  restart the BE so it picks up the new tag).
 - **Real seed data** comes from the GCS asset bucket, which is the only surviving source (the
   `PNYX-Assets` dumps and the remote dev Mongo are both unavailable here):
 
