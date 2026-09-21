@@ -20,7 +20,10 @@
  * DOTENV_CONFIG_PATH=.env.devdb 로 지정한다 — 셸 export 로는 절대 바꿀 수 없다.
  */
 import dotenv from 'dotenv';
-dotenv.config({ override: true, path: process.env.DOTENV_CONFIG_PATH ?? '.env' });
+dotenv.config({
+    override: true,
+    path: process.env.DOTENV_CONFIG_PATH ?? '.env',
+});
 if (process.env.DOTENV_CONFIG_PATH)
     console.log(`env: ${process.env.DOTENV_CONFIG_PATH}`);
 
