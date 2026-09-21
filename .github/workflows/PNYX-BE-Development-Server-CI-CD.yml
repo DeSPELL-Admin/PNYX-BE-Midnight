@@ -22,6 +22,8 @@ jobs:
                   username: ${{ secrets.DEV_SERVER_USERNAME }}
                   key: ${{ secrets.DEV_SERVER_SSH_KEY }}
                   envs: DOTENV_DEV,SCRIPT_DIR
+                  # 원격 docker build 는 레이어 캐시가 깨지면 10분(기본값)을 넘긴다 — nest build 만 5분, node_modules 복사 1분+.
+                  command_timeout: 30m
                   script: |
                       mkdir -p ${SCRIPT_DIR}/envs
                       printf '%s\n' "${DOTENV_DEV}" > ${SCRIPT_DIR}/envs/.env.development
