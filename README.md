@@ -32,7 +32,7 @@ buyer whose license was minted on-chain; the buyer re-derives each row's commitm
 
 ## Run locally
 
-Prerequisites: Node 22, npm, MongoDB, Docker (proof server), and an operator wallet on preprod
+Prerequisites: Node **22.13+ or 24** with npm ≥ 10.9.2, MongoDB, Docker (proof server), and an operator wallet on preprod
 holding tNIGHT and DUST (its coin public key must equal the contract's `finalizeSigner`).
 
 ```bash
