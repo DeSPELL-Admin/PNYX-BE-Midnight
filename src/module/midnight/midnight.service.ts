@@ -26,13 +26,56 @@ type Ctx = {
     operator: OperatorWallet;
     providers: any;
     contract: any; // FoundContract<TF.Contract>
+    compiled: any; // CompiledContract<TF.Contract> — submitCallTxAsync 가 직접 받는다
+    /**
+     * ledger.domainTag — 부팅 시 한 번만 읽는다. 매 grant 마다 컨트랙트 상태 전체(≈70KB, ≈1.4s)를 내려받아 32바이트
+     * 상수를 꺼내는 것이 grant 지연의 BE 쪽 몹이었다. 이 값은 오너의 `setDomainTag` 로만 바뀜 수 있고, 그
+     * 순간 미제출 grant 가 전부 무효화되므로 어차피 운영 이벤트다 — 바꿀 때 BE 를 재시작한다.
+     */
+    domainTag: Uint8Array;
 };
+
+export type IndexerTxStatus = 'SUCCESS' | 'PARTIAL_SUCCESS' | 'FAILURE';
 
 export type IndexerTx = {
     hash: string;
     block: { height: number; hash: string; timestamp: number };
     contractActions: { address: string }[];
+    /** RegularTransaction 에만 있다 (system tx 는 없음). 블록 포함 ≠ 성공 — 성공 판정은 이 값으로. */
+    transactionResult?: { status: IndexerTxStatus };
 };
+
+/**
+ * grant tx 생존 판정 — 비동기 제출(`submitCallTxAsync` + InBlock 대기)은 블록 포함까지만 보장하므로 재사용 시점에
+ * 인덱서로 결과를 다시 본다. 네 상태를 구분한다:
+ *   - success      : 블록 포함 + status SUCCESS + TournamentFinalizer 액션 존재 → grant 살아 있음
+ *   - failed       : 블록 포함이지만 FAILURE/PARTIAL_SUCCESS, 또는 SUCCESS 인데 기대 액션이 없음 → 확정 사망
+ *   - absent       : 인덱서 응답은 정상인데 tx 가 없음 → 아직 전파 중이거나 드롭됨 (나이로 판단)
+ *   - inconclusive : 인덱서 오류/비정상 응답 → 아무 결론도 내리지 않는다 (호출자는 fail-open)
+ */
+export type GrantLivenessResult =
+    | { state: 'success' }
+    | { state: 'failed'; status: IndexerTxStatus | 'MISSING_ACTION' }
+    | { state: 'absent' }
+    | { state: 'inconclusive'; reason: string };
+
+/**
+ * 생존 판정 조회의 상한. 이 조회는 grant 요청의 사용자 락 안에서 동기로 돌므로, 인덱서가 응답 없이 멈추면
+ * 요청이 락을 잡은 채 매달린다. 시간 초과는 "모름"(inconclusive) 으로 처리해 기존 grant 를 그대로 돌려준다.
+ */
+const GRANT_PROBE_TIMEOUT_MS = parseInt(
+    process.env.MIDNIGHT_GRANT_PROBE_TIMEOUT_MS ?? '5000',
+    10,
+);
+
+class ProbeBodyTimeoutError extends Error {
+    constructor() {
+        super('body read timeout');
+        this.name = 'TimeoutError';
+    }
+}
+
+const INDEXER_TX_QUERY = `query($id: HexEncoded!) { transactions(offset: { identifier: $id }) { hash block { height hash timestamp } contractActions { address } ... on RegularTransaction { transactionResult { status } } } }`;
 
 const PRIVATE_STATE_ID = 'pnyxTournamentFinalizerOperator';
 
@@ -91,11 +134,20 @@ export class MidnightService implements OnModuleInit {
             );
             return;
         }
-        void this.getCtx().catch((e) =>
-            this.logger.error(
-                `Midnight operator init failed: ${e?.message ?? e}`,
-            ),
+        // onModuleInit 은 app.listen() 보다 먼저 실행된다. 여기서 바로 초기화하면 wallet-sdk 의
+        // ESM/WASM 로딩과 동기화가 listen 과 같은 이벤트 루프를 두고 경쟁해 포트가 늦게 열리고
+        // 배포 스크립트의 /health 체크가 실패한다. 몇 초 미뤄서 서버가 먼저 뜨게 한다.
+        const delayMs = parseInt(
+            process.env.MIDNIGHT_INIT_DELAY_MS ?? '5000',
+            10,
         );
+        setTimeout(() => {
+            void this.getCtx().catch((e) =>
+                this.logger.error(
+                    `Midnight operator init failed: ${e?.message ?? e}`,
+                ),
+            );
+        }, delayMs);
     }
 
     get chainId(): number | null {
@@ -200,7 +252,10 @@ export class MidnightService implements OnModuleInit {
                 };
                 const out = rows.slice(0, 8).map((r) => {
                     const hasher = hashers[r.bracket?.length ?? 0];
-                    if (!hasher) throw new Error(`escrow row has invalid bracket length ${r.bracket?.length ?? 0}`);
+                    if (!hasher)
+                        throw new Error(
+                            `escrow row has invalid bracket length ${r.bracket?.length ?? 0}`,
+                        );
                     const row = {
                         tournamentId: BigInt(r.tournamentId),
                         itemId: BigInt(r.itemId),
@@ -221,7 +276,12 @@ export class MidnightService implements OnModuleInit {
                 while (out.length < 8)
                     out.push({
                         present: false,
-                        row: { tournamentId: 0n, itemId: 0n, bracketHash: zero, segment: zero },
+                        row: {
+                            tournamentId: 0n,
+                            itemId: 0n,
+                            bracketHash: zero,
+                            segment: zero,
+                        },
                         salt: zero,
                         path: emptyPath(zero),
                     });
@@ -243,10 +303,19 @@ export class MidnightService implements OnModuleInit {
             } as any,
         );
 
-        this.logger.log(
-            `joined TournamentFinalizer ${config.tournamentFinalizerAddress} as ${operator.unshieldedAddress}`,
+        const st = await providers.publicDataProvider.queryContractState(
+            config.tournamentFinalizerAddress,
         );
-        return { sdk, TF, operator, providers, contract };
+        if (!st)
+            throw new InternalServerErrorException(
+                'TournamentFinalizer contract state not found on indexer',
+            );
+        const domainTag: Uint8Array = TF.ledger(st.data).domainTag;
+
+        this.logger.log(
+            `joined TournamentFinalizer ${config.tournamentFinalizerAddress} as ${operator.unshieldedAddress} (domainTag ${toHex(domainTag).slice(0, 10)}…)`,
+        );
+        return { sdk, TF, operator, providers, contract, compiled, domainTag };
     }
 
     /** 컨트랙트 public ledger 스냅샷 */
@@ -273,8 +342,7 @@ export class MidnightService implements OnModuleInit {
         deadline: bigint,
         entryItemHexes: string,
     ): Promise<string> {
-        const { TF } = await this.getCtx();
-        const ledger = await this.readLedger();
+        const { TF, domainTag } = await this.getCtx();
         const bytes = fromHex(entryItemHexes);
         const count = bytes.length / 2;
         if (![16, 32, 64].includes(count)) {
@@ -293,7 +361,7 @@ export class MidnightService implements OnModuleInit {
         const bHash = hashers[count as 16 | 32 | 64](bracket);
         return toHex(
             TF.pureCircuits.eligibilityLeaf(
-                ledger.domainTag,
+                domainTag,
                 bytes32(userPkHex, 'userPk'),
                 BigInt(tournamentId),
                 BigInt(point),
@@ -303,15 +371,67 @@ export class MidnightService implements OnModuleInit {
         );
     }
 
-    async grantEligibility(
-        leafHex: string,
-    ): Promise<{ txId: string; blockHeight: number }> {
-        const { contract } = await this.getCtx();
-        const tx = await contract.callTx.grantEligibility(fromHex(leafHex));
-        return {
-            txId: tx.public.txId,
-            blockHeight: Number(tx.public.blockHeight),
+    /**
+     * grant leaf 를 온체인 Merkle 트리에 넣는다 — **비동기 제출**.
+     *
+     * `contract.callTx` 는 제출 후 `watchForTxData` 로 인덱서 최종 반영까지 기다린 뒤 resolve 되는데,
+     * FE 는 어차피 leaf 가 인덱서에 보일 때까지 직접 폴링하므로 여기서 기다릴 이유가 없다.
+     * `submitCallTxAsync` 는 증명 → 밸런싱 → 제출까지만 하고 txId 를 돌려준다. 제출은 우리 지갑 어댑터
+     * (`lib/wallet.ts` submitTx)가 **블록 포함('InBlock', ≈6s)**까지 기다린다 — facade 기본값인 최종성('Finalized',
+     * ≈18s)이 예전 grant 지연의 진짜 원인이었다. 인덱서에는 최종성 뒤(응답 후 ≈15s)에야 leaf 가 보인다.
+     * 제출 전 실패(proof server, DUST 부족, 노드 거부)는 여전히 여기서 throw 된다. 제출 후 실패(포함된
+     * 블록이 최종성에서 빠짐, 회로 실패)는 `probeGrantLiveness` 가 잡는다.
+     * grantEligibility 는 private state 를 바꾸지 않으므로 nextPrivateState 저장이 필요 없다 — 다른 회로에
+     * 이 방식을 그대로 쓰면 안 된다.
+     */
+    async grantEligibility(leafHex: string): Promise<{ txId: string }> {
+        const { sdk, providers, compiled } = await this.getCtx();
+        const config = this.requireConfig();
+        // 증명 / 밸런싱(지갑 DUST 증명) / 제출(지갑이 블록 포함까지 기다린다) 각 구간을 재서 남긴다 —
+        // grant 지연의 어느 족이 병목인지는 이 로그로만 알 수 있다 (이 세 단계는 SDK 안에서 직렬로 돈다).
+        const t: Record<string, number> = {};
+        const timed = <T>(name: string, p: Promise<T>): Promise<T> => {
+            const t0 = Date.now();
+            return p.finally(() => {
+                t[name] = Date.now() - t0;
+            });
         };
+        const timedProviders = {
+            ...providers,
+            proofProvider: {
+                ...providers.proofProvider,
+                proveTx: (...a: unknown[]) =>
+                    timed('prove', providers.proofProvider.proveTx(...a)),
+            },
+            walletProvider: {
+                ...providers.walletProvider,
+                balanceTx: (...a: unknown[]) =>
+                    timed('balance', providers.walletProvider.balanceTx(...a)),
+            },
+            midnightProvider: {
+                ...providers.midnightProvider,
+                submitTx: (...a: unknown[]) =>
+                    timed('submit', providers.midnightProvider.submitTx(...a)),
+            },
+        };
+        const t0 = Date.now();
+        try {
+            const { txId } = await sdk.contracts.submitCallTxAsync(
+                timedProviders,
+                {
+                    compiledContract: compiled,
+                    circuitId: 'grantEligibility',
+                    contractAddress: config.tournamentFinalizerAddress,
+                    privateStateId: PRIVATE_STATE_ID,
+                    args: [fromHex(leafHex)],
+                },
+            );
+            return { txId: String(txId) };
+        } finally {
+            this.logger.log(
+                `[grant-submit] prove=${t.prove ?? '-'}ms balance=${t.balance ?? '-'}ms submit=${t.submit ?? '-'}ms total=${Date.now() - t0}ms`,
+            );
+        }
     }
 
     /** 인덱서에서 트랜잭션 조회 (identifier = txId). 없으면 null. */
@@ -321,7 +441,7 @@ export class MidnightService implements OnModuleInit {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({
-                query: `query($id: HexEncoded!) { transactions(offset: { identifier: $id }) { hash block { height hash timestamp } contractActions { address } } }`,
+                query: INDEXER_TX_QUERY,
                 variables: { id: txId },
             }),
         });
@@ -336,6 +456,88 @@ export class MidnightService implements OnModuleInit {
                 `indexer errors: ${JSON.stringify(json.errors).slice(0, 300)}`,
             );
         return json.data?.transactions?.[0] ?? null;
+    }
+
+    /**
+     * grant tx 생존 판정 (`GrantLivenessResult` 참고). `getTransaction` 과 달리 인덱서 오류를 절대 "없음"으로
+     * 뭉개지 않는다 — 오류는 `inconclusive` 로 돌려서 호출자가 기존 grant 를 유지(fail-open)하게 한다.
+     */
+    async probeGrantLiveness(txId: string): Promise<GrantLivenessResult> {
+        const config = this.requireConfig();
+        let json: {
+            data?: { transactions?: IndexerTx[] };
+            errors?: unknown;
+        };
+        // 헤더와 본문을 합쳤 하나의 데드라인이다 — 이 조회는 사용자 grant 락 안에서 도니 총 보유 시간이 상한을 넘으면 안 된다.
+        const deadline = Date.now() + GRANT_PROBE_TIMEOUT_MS;
+        try {
+            const res = await fetch(config.indexerUrl, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({
+                    query: INDEXER_TX_QUERY,
+                    variables: { id: txId },
+                }),
+                signal: AbortSignal.timeout(GRANT_PROBE_TIMEOUT_MS),
+            });
+            if (!res.ok)
+                return {
+                    state: 'inconclusive',
+                    reason: `indexer ${res.status}`,
+                };
+            // 본문 읽기는 남은 시간만 준다 — fetch 의 signal 은 undici 에서 본문 읽기도 끊지만, 그 동작에
+            // 기대지 않고 여기서 직접 보장한다(응답 헤더는 왔는데 본문이 멈추면 락을 잡은 채 매달린다).
+            let bodyTimer: NodeJS.Timeout | undefined;
+            try {
+                json = await Promise.race([
+                    res.json(),
+                    new Promise<never>((_, reject) => {
+                        bodyTimer = setTimeout(
+                            () => reject(new ProbeBodyTimeoutError()),
+                            Math.max(0, deadline - Date.now()),
+                        );
+                    }),
+                ]);
+            } finally {
+                clearTimeout(bodyTimer);
+            }
+        } catch (e) {
+            const err = e as { name?: string; message?: string };
+            const reason =
+                e instanceof ProbeBodyTimeoutError
+                    ? `indexer body read timeout after ${GRANT_PROBE_TIMEOUT_MS}ms`
+                    : err?.name === 'TimeoutError' || err?.name === 'AbortError'
+                      ? `indexer timeout after ${GRANT_PROBE_TIMEOUT_MS}ms`
+                      : `indexer unreachable: ${err?.message ?? String(e)}`;
+            return { state: 'inconclusive', reason };
+        }
+        if (json.errors)
+            return {
+                state: 'inconclusive',
+                reason: `graphql errors: ${JSON.stringify(json.errors).slice(0, 200)}`,
+            };
+        const txs = json.data?.transactions;
+        if (!Array.isArray(txs))
+            return { state: 'inconclusive', reason: 'malformed response' };
+        const tx = txs[0];
+        if (!tx) return { state: 'absent' };
+        const status = tx.transactionResult?.status;
+        if (
+            status !== 'SUCCESS' &&
+            status !== 'PARTIAL_SUCCESS' &&
+            status !== 'FAILURE'
+        )
+            return {
+                state: 'inconclusive',
+                reason: `unknown transactionResult ${String(status)}`,
+            };
+        if (status !== 'SUCCESS') return { state: 'failed', status };
+        const expected = config.tournamentFinalizerAddress.toLowerCase();
+        const hasAction = (tx.contractActions ?? []).some(
+            (a) => a?.address?.toLowerCase() === expected,
+        );
+        if (!hasAction) return { state: 'failed', status: 'MISSING_ACTION' };
+        return { state: 'success' };
     }
 
     /**

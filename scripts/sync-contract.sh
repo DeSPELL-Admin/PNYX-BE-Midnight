@@ -11,4 +11,7 @@ rsync -a --delete "$SRC/contract/" "$DST/contract/"
 rsync -a --delete "$SRC/keys/" "$DST/keys/"
 rsync -a --delete "$SRC/zkir/" "$DST/zkir/"
 printf '{ "type": "module" }\n' > "$DST/contract/package.json"
-echo "synced → midnight-contract/TournamentFinalizer ($(du -sh "$DST" | cut -f1))"
+# The BE only proves grantEligibility / registerBuyer / sellRows / set*. The finalizeTournament{16,32,64}
+# prover keys (~40 MB) are browser-side (PNYX-FE public/zk) — drop them so the committed copy stays small.
+rm -f "$DST"/keys/finalizeTournament*.prover
+echo "synced → midnight-contract/TournamentFinalizer ($(du -sh "$DST" | cut -f1)) — commit it, the deploy build has no PNYX-Contract"

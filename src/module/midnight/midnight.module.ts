@@ -10,6 +10,7 @@ import { MidnightGrantModule } from 'src/module/domain/midnight-grant/midnight-g
 import { MidnightEscrowModule } from 'src/module/domain/midnight-escrow/midnight-escrow.module';
 import { MidnightOrderModule } from 'src/module/domain/midnight-order/midnight-order.module';
 import { TournamentModule } from 'src/module/api/tournament/tournament.module';
+import { ItemModule } from 'src/module/domain/item/item.module';
 import { TournamentFinalizerModule } from 'src/scanner/module/event/contract/tournament-finalizer/tournament-finalizer.module';
 
 @Module({
@@ -19,6 +20,8 @@ import { TournamentFinalizerModule } from 'src/scanner/module/event/contract/tou
         MidnightEscrowModule,
         MidnightOrderModule,
         TournamentModule,
+        // TournamentModule 은 TournamentService 만 re-export 하므로 ItemService 는 직접 가져온다.
+        ItemModule,
         TournamentFinalizerModule,
     ],
     controllers: [MidnightController, MarketController],

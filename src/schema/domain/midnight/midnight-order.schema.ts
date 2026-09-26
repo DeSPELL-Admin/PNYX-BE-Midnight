@@ -8,6 +8,19 @@ import {
 export type MidnightOrderDocument = HydratedDocument<MidnightOrder>;
 
 /**
+ * Escrow row as pinned at sale time — the exact witness input that produced
+ * `datasetJson`/`datasetHash`. Retries must reuse these instead of re-reading
+ * live escrow, or the rebuilt dataset can diverge from the hash already on-chain.
+ */
+export interface MidnightOrderPinnedRow {
+    tournamentId: number;
+    itemId: number;
+    bracket: number[];
+    segment: string;
+    salt: string;
+}
+
+/**
  * Data-market order for escrowed vote rows. Tracks the full lifecycle from
  * creation through payment to fulfillment (registerBuyer -> sellRows -> license).
  * `querySpec`/`specHash` bind the on-chain license to this order (orderId makes it unique,
@@ -82,6 +95,23 @@ export class MidnightOrder {
 
     @Prop({ type: String, required: false, lowercase: true, trim: true })
     datasetHash?: string;
+
+    // escrow rows pinned at sale time, verbatim — a retry reuses these rather than
+    // re-reading live escrow, so `datasetJson`/`datasetHash` stay the bytes on-chain
+    @Prop({
+        type: [
+            {
+                _id: false,
+                tournamentId: { type: Number, required: true },
+                itemId: { type: Number, required: true },
+                bracket: { type: [Number], required: true, default: [] },
+                segment: { type: String, required: true },
+                salt: { type: String, required: true },
+            },
+        ],
+        required: false,
+    })
+    pinnedRows?: MidnightOrderPinnedRow[];
 
     @Prop({ type: Number, required: false })
     deliveredRowCount?: number;

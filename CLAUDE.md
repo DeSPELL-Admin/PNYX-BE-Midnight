@@ -94,8 +94,27 @@ This copy is Midnight-only; the legacy EVM scanner and signing stack were remove
   (ESM contract + keys/zkir) to `midnight-contract/` (gitignored). Proving keys are required for `grantEligibility`.
 - **Env**: `MIDNIGHT_ENABLED`, `MIDNIGHT_NETWORK`, `MIDNIGHT_CHAIN_ID`, `MIDNIGHT_WALLET_SEED` (same wallet as the
   contract deployer/operator), `MIDNIGHT_TOURNAMENT_FINALIZER_CONTRACT_ADDRESS`, `MIDNIGHT_PROOF_SERVER_URL`,
-  `MIDNIGHT_WALLET_STATE_FILE` (sync checkpoint — copy `PNYX-Contract/scripts/output/wallet-state-preprod.json`
-  here to skip the ~30 min first sync), `MIDNIGHT_GRANT_TTL_SECONDS`.
+  `MIDNIGHT_WALLET_STATE_FILE` (sync checkpoint; `midnight-wallet-state-preprod.json` is **committed** and
+  COPYed into the Docker image so a fresh container skips the ~30 min genesis sync — it holds public keys +
+  synced state only, no seed. Re-commit the locally refreshed file when the gap grows. A checkpoint can go
+  stale wholesale: when the preprod indexer re-indexes, event ids shift and every restore loops forever on
+  `values inserted non-linearly into zswap/dust commitment tree`. `buildOperatorWallet` detects a restored
+  wallet that makes no sync progress for 90 s, stops it and re-syncs from genesis — after that happens,
+  re-commit the fresh file or every new container pays the full sync), `MIDNIGHT_INIT_DELAY_MS`
+  (default 5000 — operator init is deferred so `app.listen()` binds before the wallet-sdk WASM load blocks
+  the event loop; the deploy health check needs the port open within ~60 s), `MIDNIGHT_GRANT_TTL_SECONDS`,
+  `MIDNIGHT_GRANT_LIVENESS_THRESHOLD_SECONDS` (default 45 — `grantEligibility` is submitted with
+  `submitCallTxAsync` and the operator wallet adapter waits only for block inclusion (`InBlock`, ≈6 s;
+  the facade default `Finalized` was ≈18 s and the real grant bottleneck), so a stored grant record is
+  not proof the tx reached finality — the indexer shows the leaf ≈15 s after the API responds; on reuse the service probes the indexer (`probeGrantLiveness`: success / failed / absent /
+  inconclusive) and re-submits the same leaf when the tx is indexed as FAILURE/PARTIAL_SUCCESS or has been
+  absent longer than this threshold. Indexer errors fail open and keep the existing grant. Keep it below
+  the FE leaf-poll budget (~58 s) so a user retry actually triggers the re-grant. The probe runs inside the
+  per-user grant lock, so it is bounded by `MIDNIGHT_GRANT_PROBE_TIMEOUT_MS` (default 5000) and a timeout
+  is also inconclusive. Grant API latency is logged per request as `[grant-api-latency] … ms=<n>` and
+  the submit phases as `[grant-submit] prove= balance= submit=`. `ledger.domainTag` is read once at
+  operator init and cached for the process lifetime; if the contract owner ever calls `setDomainTag`,
+  restart the BE so it picks up the new tag).
 - **Real seed data** comes from the GCS asset bucket, which is the only surviving source (the
   `PNYX-Assets` dumps and the remote dev Mongo are both unavailable here):
 
@@ -104,10 +123,17 @@ This copy is Midnight-only; the legacy EVM scanner and signing stack were remove
       asset/seed-creation/import-from-bucket.ts [--dry]
   ```
 
+  The importer loads `.env` with `override: true`, so a `MONGODB_URI=...` on the command line is
+  **ignored**. To seed another database (the dev server's Mongo is reachable on its public IP with
+  `directConnection=true`), copy `.env` to `.env.devdb`, change `MONGODB_URI` there, and run with
+  `DOTENV_CONFIG_PATH=.env.devdb` in front of the command above. Always `--dry` first.
+
   It lists `images/{ts}_{uuid}_{imageName}.webp`, parses `imageName` as `{sanitizedName}-{tournamentId}`
   (the rule `insert-metadata.ts` writes; `10`/`11` share a `-10-11` suffix), and upserts `files`
   (`originalName` → `uploadedName`, required or images 404), `categories`, `tournaments` and `items`.
-  Result: 9 tournaments (`0,1,2,3,4,9,10,11,12`) × 64 items = 576 items, 512 file rows.
+  Result: 8 tournaments (`0,1,2,3,4,10,11,12`) × 64 items = 512 items. Tournament `9`
+  (Soneium Ecosystem World Cup) is in the bucket but deliberately skipped via `EXCLUDED_TOURNAMENTS` —
+  it is Soneium/EVM-era content and has no place in the Midnight build.
 
   Two things the bucket cannot carry, both isolated so they are easy to correct:
   - **Tournament titles/categories** — inferred from the item sets, in `TOURNAMENT_META` at the top of the
@@ -132,6 +158,19 @@ This copy is Midnight-only; the legacy EVM scanner and signing stack were remove
   → `/tournaments/:id/rounds/8` (creates playVerification) → on-chain `grantEligibility` (~30 s). Prints the
   `SMOKE_SEED` so the same simulated wallet can be reused. `scripts/midnight-auth-smoke.mjs` is the older
   login-only version.
+- **Headless vote generator** (data-market demo data): `bash scripts/start-local.sh node
+  scripts/midnight-headless-votes.mjs [base] [origin] [tournamentId] [count] [--round=16|32|64]
+  [--champion=<itemId>] [--pause=<sec>]` does the whole browser flow N times — fresh simulated wallet →
+  grant → **finalizeTournament proof + submit** → finalize-confirm → escrow (~1–2 min per vote, ~35 s of it
+  proving). Votes must be real: `sellRows` asserts `RowNotOnChain` per row, so DB-only escrow rows can never be
+  sold. The nullifier is `hash(userSecret, tournamentId)`, so one wallet (the operator's, for fees) can cast
+  many votes with fresh `userSecret`s. Needs `npm run build` (reuses `dist/` sdk/wallet loaders), a proof server
+  that accepts contract circuits (local `:6300`; the public preprod one returns 403 on `/prove`), and the
+  `finalizeTournament*.prover` keys — absent from `midnight-contract/` on purpose, so it reads them from
+  `../PNYX-Contract/contracts/managed/TournamentFinalizer` (or `--contract-dir`). The contract *module* is
+  always loaded from `midnight-contract/` — importing the sibling repo's copy loads a second compact-runtime
+  WASM and fails with `expected instance of ChargedState`. Waits for the grant leaf to be visible on the indexer
+  before proving (otherwise `InvalidSigner`). Wallet checkpoint goes to `*.headless.json` so it never races the BE.
 - `ChainService.getAllSupportedChainIds()` appends the Midnight chainId when enabled; `chain.service.spec.ts`
   pins `MIDNIGHT_ENABLED=false`.
 - **Data market** (`docs/market-dev-plan.md` in `midnight/`): `/chains/99101/market/*` — products

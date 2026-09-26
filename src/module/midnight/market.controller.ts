@@ -13,7 +13,10 @@ import {
 import { ApiCookieAuth, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { ApiStandardResponse } from 'src/module/common/decorator/swagger.decorator';
-import { createSwaggerSingleResult } from 'src/module/common/swagger/single.swagger';
+import {
+    createSwaggerArraySingleResult,
+    createSwaggerSingleResult,
+} from 'src/module/common/swagger/single.swagger';
 import { ResponseDto } from 'src/module/common/decorator/response-dto.decorator';
 import { AccessTokenGuard } from 'src/module/common/guard/access-token.guard';
 import { NoTransform } from 'src/module/common/decorator/no-transform.decorator';
@@ -26,6 +29,7 @@ import { PayOrderBodyDto } from './dto/req/pay-order.body.dto';
 import { OrderParamDto } from './dto/req/order.param.dto';
 import { MarketProductResDto } from './dto/res/market-product.res.dto';
 import { OrderResDto } from './dto/res/order.res.dto';
+import { OrderCatalogResDto } from './dto/res/order-catalog.res.dto';
 
 /** 데이터 마켓 — 구매자 주문/결제/다운로드. 판매(sellRows)는 BE 가 자동 fulfill (docs/market-dev-plan.md). */
 @ApiTags('Midnight Market')
@@ -114,6 +118,55 @@ export class MarketController {
             walletAddress.toLowerCase(),
             param.orderId,
             body.txId,
+        );
+    }
+
+    // 라우트 순서 주의: 'orders' 는 'orders/:orderId' 보다 먼저 선언돼야 한다.
+    // 뒤에 두면 NestJS 가 리터럴 경로를 파라미터 라우트로 먼저 매칭한다.
+    @Get('orders')
+    @ResponseDto(OrderResDto)
+    @ApiStandardResponse({
+        summary: '내 주문 목록',
+        description: '호출자 지갑의 주문을 최신순으로 최대 50건 반환합니다.',
+        successStatus: HttpStatus.OK,
+        successType: createSwaggerArraySingleResult(OrderResDto),
+        successDescription: '주문 목록',
+        includeUnauthorized: true,
+        includeInternalServerError: true,
+    })
+    async myOrders(
+        @Param() param: ByChainIdParamDto,
+        @Payload('sub') walletAddress: string,
+    ): Promise<OrderResDto[]> {
+        this.chainService.validateChainId(param.chainId);
+        return await this.marketService.getMyOrders(
+            param.chainId,
+            walletAddress.toLowerCase(),
+        );
+    }
+
+    @Get('orders/:orderId/catalog')
+    @ResponseDto(OrderCatalogResDto)
+    @ApiStandardResponse({
+        summary: '주문 토너먼트의 아이템 카탈로그',
+        description:
+            '데이터셋의 itemId/bracket 을 이름·이미지로 렌더링하기 위한 참조표. 주문 상태와 무관하게 조회됩니다.',
+        successStatus: HttpStatus.OK,
+        successType: createSwaggerSingleResult(OrderCatalogResDto),
+        successDescription: '아이템 카탈로그',
+        includeUnauthorized: true,
+        includeNotFound: true,
+        includeInternalServerError: true,
+    })
+    async orderCatalog(
+        @Param() param: OrderParamDto,
+        @Payload('sub') walletAddress: string,
+    ): Promise<OrderCatalogResDto> {
+        this.chainService.validateChainId(param.chainId);
+        return await this.marketService.getOrderCatalog(
+            param.chainId,
+            walletAddress.toLowerCase(),
+            param.orderId,
         );
     }
 

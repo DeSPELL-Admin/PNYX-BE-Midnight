@@ -5,6 +5,7 @@ import { Injectable } from '@nestjs/common';
 import { GetItemByTournamentIdAndItemIdQueryResult } from './query-result/get-item-by-tournament-id-and-item-id.query-result';
 import { FindItemStatisticsByTournamentIdQueryResult } from './query-result/find-item-statistics-by-tournament-id.query-result';
 import { FindItemBettingStatisticsByTournamentIdQueryResult } from './query-result/find-item-betting-statistics-by-tournament-id.query-result';
+import { FindNamesByTournamentIdQueryResult } from './query-result/find-names-by-tournament-id.query-result';
 import { calculateSkip } from 'src/module/common/util/pagination.util';
 
 @Injectable()
@@ -28,6 +29,18 @@ export class ItemRepository {
             .findOne({ tournamentId, itemId })
             .select('name imageName -_id')
             .lean()
+            .exec();
+    }
+
+    /** 데이터셋/카탈로그용 이름 조회 — itemId 오름차순. */
+    async findNamesByTournamentId(
+        tournamentId: number,
+    ): Promise<FindNamesByTournamentIdQueryResult[]> {
+        return await this.itemModel
+            .find({ tournamentId })
+            .sort({ itemId: 1 })
+            .select('itemId name imageName -_id')
+            .lean<FindNamesByTournamentIdQueryResult[]>()
             .exec();
     }
 

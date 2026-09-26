@@ -16,7 +16,9 @@ COPY src ./src
 
 # Midnight 컴파일 컨트랙트(ESM contract + keys/zkir). midnight.service.ts 의
 # `typeof import('../../../midnight-contract/...')` 타입 해석에 필요하므로 빌더에도 복사한다.
-# (gitignore 대상이지만 docker 빌드 컨텍스트에는 포함된다. 빌드 전 scripts/sync-contract.sh 로 동기화.)
+# 이 디렉터리는 레포에 커밋되어 있다(배포 빌드 컨텍스트에는 PNYX-Contract 가 없으므로).
+# 컨트랙트를 다시 컴파일하면 scripts/sync-contract.sh 로 갱신해 커밋한다. FE 전용
+# finalizeTournament*.prover 는 제외되어 있다(BE 는 그 회로를 증명하지 않는다).
 # node_modules 밖이라 `npm prune` 후에도 유지된다.
 COPY midnight-contract ./midnight-contract
 
@@ -48,6 +50,17 @@ COPY --from=builder --chown=node:node /app/dist ./dist
 # keys/zkir 를 읽는다. MIDNIGHT_CONTRACT_DIR(기본 midnight-contract/TournamentFinalizer)
 # 는 /app 기준으로 해석된다.
 COPY --from=builder --chown=node:node /app/midnight-contract ./midnight-contract
+
+# preprod 오퍼레이터 지갑 동기화 체크포인트(레포에 커밋됨, 공개키 + 동기화 상태만).
+# 없으면 컨테이너가 제네시스부터 ~30분 동기화하며 그동안 이벤트 루프가 막혀 헬스체크가 실패한다.
+# MIDNIGHT_WALLET_STATE_FILE 기본값(midnight-wallet-state-<network>.json, cwd 기준)과 경로가 같다.
+COPY --chown=node:node midnight-wallet-state-preprod.json ./midnight-wallet-state-preprod.json
+
+# 런타임이 cwd(/app) 에 상태를 쓴다 — 지갑 동기화 체크포인트(MIDNIGHT_WALLET_STATE_FILE, 기본
+# midnight-wallet-state-<network>.json) 와 midnight-js private state DB(midnight-level-db/).
+# WORKDIR 이 만든 /app 은 root 소유라 node 유저로는 EACCES 가 나므로 디렉터리 소유권을 넘긴다.
+# 컨테이너가 갱신한 체크포인트는 재배포 시 사라진다 — 유지하려면 두 경로를 볼륨으로 마운트한다.
+RUN chown node:node /app
 
 # 보안 기본값: root 권한 대신 node 사용자로 실행한다.
 USER node

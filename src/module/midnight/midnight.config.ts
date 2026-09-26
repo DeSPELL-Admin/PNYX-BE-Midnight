@@ -28,9 +28,9 @@ export type MidnightConfig = {
 
 const DEFAULT_CHAIN_IDS: Record<MidnightNetworkId, number> = { undeployed: 99100, preprod: 99101, preview: 99102 };
 const DEFAULT_URLS: Record<MidnightNetworkId, { indexer: string; ws: string; node: string }> = {
-    undeployed: { indexer: 'http://127.0.0.1:8088/api/v3/graphql', ws: 'ws://127.0.0.1:8088/api/v3/graphql/ws', node: 'http://127.0.0.1:9944' },
-    preprod: { indexer: 'https://indexer.preprod.midnight.network/api/v3/graphql', ws: 'wss://indexer.preprod.midnight.network/api/v3/graphql/ws', node: 'https://rpc.preprod.midnight.network' },
-    preview: { indexer: 'https://indexer.preview.midnight.network/api/v3/graphql', ws: 'wss://indexer.preview.midnight.network/api/v3/graphql/ws', node: 'https://rpc.preview.midnight.network' },
+    undeployed: { indexer: 'http://127.0.0.1:8088/api/v4/graphql', ws: 'ws://127.0.0.1:8088/api/v4/graphql/ws', node: 'http://127.0.0.1:9944' },
+    preprod: { indexer: 'https://indexer.preprod.midnight.network/api/v4/graphql', ws: 'wss://indexer.preprod.midnight.network/api/v4/graphql/ws', node: 'https://rpc.preprod.midnight.network' },
+    preview: { indexer: 'https://indexer.preview.midnight.network/api/v4/graphql', ws: 'wss://indexer.preview.midnight.network/api/v4/graphql/ws', node: 'https://rpc.preview.midnight.network' },
 };
 
 const opt = (key: string, fallback: string): string => process.env[key] || fallback;
